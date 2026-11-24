@@ -16,9 +16,19 @@ from .models import (
     GapQueryResponse,
     MaskSubmitResponse,
     MaskSubmission,
+    RepairRequest,
+    RepairResponse,
     SceneInfo,
 )
-from .services import GeometryConflictError, get_scene, query_gaps, submit_mask
+from .services import (
+    CorruptSourceMaskError,
+    GeometryConflictError,
+    RepairConflictError,
+    get_scene,
+    query_gaps,
+    repair_coverage,
+    submit_mask,
+)
 
 
 @asynccontextmanager
@@ -66,6 +76,44 @@ def upsert_mask(submission: MaskSubmission) -> MaskSubmitResponse:
             status_code=status.HTTP_409_CONFLICT, detail=str(exc)
         ) from exc
     return MaskSubmitResponse(**result)  # type: ignore[arg-type]
+
+
+@app.post(
+    "/repairs",
+    response_model=RepairResponse,
+    status_code=status.HTTP_200_OK,
+    tags=["覆盖修复"],
+    summary="按源掩膜修复矩形内的已提交覆盖",
+    description=(
+        "输入 UTC 日期与矩形（宽、高各 <= 256 格）。以与该矩形相交的景的"
+        "源掩膜为准，逐格比对各波段的景号集合；只改写集合有差异的格，即使"
+        "缺口类别不变也修正。返回每个改动格的坐标及各波段补入、移除的景号。\n\n"
+        "重算期间仍可补报。若开始后曾有补报改变矩形内任一景、任一波段、任一"
+        "格的有效位（即使随后改回），返回 409 冲突；矩形外的改动不影响修复。"
+        "写回时不再读取源掩膜；冲突或写入失败都会回滚，不留下本次修复的任何"
+        "改动。"
+    ),
+    responses={
+        status.HTTP_409_CONFLICT: {
+            "description": "修复开始后区内波段有效位被补报改变（含改回）。"
+        },
+        status.HTTP_500_INTERNAL_SERVER_ERROR: {
+            "description": "源掩膜与已登记几何不符，修复中止且未写入任何改动。"
+        },
+    },
+)
+def repairs(request: RepairRequest) -> RepairResponse:
+    try:
+        result = repair_coverage(connect, request)
+    except RepairConflictError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
+    except CorruptSourceMaskError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
+        ) from exc
+    return RepairResponse(**result)  # type: ignore[arg-type]
 
 
 @app.get(

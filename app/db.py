@@ -1,6 +1,6 @@
 """SQLite persistence for band masks and committed coverage.
 
-Three tables are used:
+Four tables are used:
 
 * ``scenes``      - one row per (UTC date, scene id); grid origin and size of a
                     scene are immutable once first registered.
@@ -10,6 +10,10 @@ Three tables are used:
                     scene-id lists that supply a valid red / NIR sample at that
                     cell. Queries read only this table; masks are never touched
                     on the query path.
+* ``mask_changes``- audit of bit flips caused by submissions. A coverage repair
+                    records the highest sequence it read and treats any later
+                    flip inside its rectangle as a conflict (flip-and-back
+                    included).
 """
 
 from __future__ import annotations
@@ -59,6 +63,28 @@ CREATE TABLE IF NOT EXISTS coverage (
     updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     PRIMARY KEY (date, x, y)
 ) WITHOUT ROWID;
+
+-- Audit of validity-bit changes made by mask submissions. A coverage repair
+-- records the highest ``seq`` it read and aborts if a later submission changed
+-- any bit inside the repaired rectangle, even if a subsequent submission
+-- changed it back. ``changed_cells`` is a packed array of little-endian
+-- int64 (x, y) pairs; the min/max columns bound the changed cells so the
+-- conflict check only unpacks rows whose box meets the repair rectangle.
+CREATE TABLE IF NOT EXISTS mask_changes (
+    seq           INTEGER PRIMARY KEY AUTOINCREMENT,
+    date          TEXT NOT NULL,
+    scene_id      TEXT NOT NULL,
+    band          TEXT NOT NULL CHECK (band IN ('red', 'nir')),
+    min_x         INTEGER NOT NULL,
+    max_x         INTEGER NOT NULL,
+    min_y         INTEGER NOT NULL,
+    max_y         INTEGER NOT NULL,
+    changed_cells BLOB NOT NULL,
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS mask_changes_by_date_box
+    ON mask_changes (date, seq, min_x, max_x, min_y, max_y);
 """
 
 

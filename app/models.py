@@ -126,6 +126,64 @@ class GapQueryResponse(BaseModel):
     )
 
 
+class RepairRequest(BaseModel):
+    """Coordinates of a coverage repair: one UTC date and one grid rectangle.
+
+    The rectangle is bounded by the same per-side limit as masks and gap
+    queries (1–256 cells). Coordinates may lie outside submitted scene
+    extents; such cells are checked like any other and repaired if the
+    committed coverage disagrees with the source masks.
+    """
+
+    date: date_type = Field(..., description="UTC date of the coverage to repair.")
+    origin_x: int = Field(..., description="Rectangle upper-left grid x coordinate.")
+    origin_y: int = Field(..., description="Rectangle upper-left grid y coordinate.")
+    width: int = Field(
+        ..., ge=1, le=MAX_SIDE, description=f"Rectangle width in cells, <= {MAX_SIDE}."
+    )
+    height: int = Field(
+        ..., ge=1, le=MAX_SIDE, description=f"Rectangle height in cells, <= {MAX_SIDE}."
+    )
+
+
+class CellRepair(BaseModel):
+    """One repaired cell: which scene ids entered / left each band's set."""
+
+    x: int = Field(..., description="Grid x coordinate of the repaired cell.")
+    y: int = Field(..., description="Grid y coordinate of the repaired cell.")
+    red_added: list[str] = Field(
+        ..., description="Scene ids added to the cell's valid-red scene set."
+    )
+    red_removed: list[str] = Field(
+        ..., description="Scene ids removed from the cell's valid-red scene set."
+    )
+    nir_added: list[str] = Field(
+        ..., description="Scene ids added to the cell's valid-NIR scene set."
+    )
+    nir_removed: list[str] = Field(
+        ..., description="Scene ids removed from the cell's valid-NIR scene set."
+    )
+
+
+class RepairResponse(BaseModel):
+    date: date_type
+    origin_x: int
+    origin_y: int
+    width: int
+    height: int
+    cells_checked: int = Field(..., description="Number of cells in the rectangle.")
+    cells_changed: int = Field(
+        ..., description="Cells whose band scene-id sets differed and were rewritten."
+    )
+    changes: list[CellRepair] = Field(
+        ...,
+        description=(
+            "One entry per changed cell, with the scene ids inserted into and "
+            "removed from each band's set."
+        ),
+    )
+
+
 class SceneBandInfo(BaseModel):
     band: Band
     valid_cells: int
